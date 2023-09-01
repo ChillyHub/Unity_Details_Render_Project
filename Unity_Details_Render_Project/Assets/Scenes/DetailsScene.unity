@@ -212,14 +212,14 @@ Transform:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 426265}
-  m_LocalRotation: {x: -0.8743653, y: -0.10998922, z: -0.23428579, w: 0.41048488}
+  m_LocalRotation: {x: -0.14980194, y: -0.25568765, z: -0.040139318, w: 0.954239}
   m_LocalPosition: {x: 0, y: 3, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
   m_RootOrder: 2
-  m_LocalEulerAnglesHint: {x: 111.9, y: -30, z: 0}
+  m_LocalEulerAnglesHint: {x: -43.36, y: -30, z: 0}
 --- !u!114 &426268
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -322,7 +322,7 @@ MonoBehaviour:
   skyboxMaterial: {fileID: 2100000, guid: 2cbdfe6ab15ca2f40b9f39fd46e3a046, type: 2}
   sunLight: {fileID: 426266}
   moonLight: {fileID: 799929140}
-  rotation: {x: 230.53868, y: 329.99997, z: 0.0000026652087}
+  rotation: {x: 342.59656, y: 330, z: 0.0000009339492}
   autoRotateSun: 1
   autoRotateSpeed: 0.135
   inverse: 0
@@ -2219,9 +2219,39 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 3967374232905845432, guid: a700f3c8cfbf15a4bbf3a5bfc7e6cc70,
         type: 3}
+      propertyPath: faceMaterial
+      value: 
+      objectReference: {fileID: 2100000, guid: de12e07bcfdbeea479dc4dcbba8bec28, type: 2}
+    - target: {fileID: 3967374232905845432, guid: a700f3c8cfbf15a4bbf3a5bfc7e6cc70,
+        type: 3}
       propertyPath: hairMaterial
       value: 
       objectReference: {fileID: 2100000, guid: af20b3bc2a0bb3243a10d5488e53fa69, type: 2}
+    - target: {fileID: 3967374232905845432, guid: a700f3c8cfbf15a4bbf3a5bfc7e6cc70,
+        type: 3}
+      propertyPath: faceMaterials.Array.size
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 3967374232905845432, guid: a700f3c8cfbf15a4bbf3a5bfc7e6cc70,
+        type: 3}
+      propertyPath: hairMaterials.Array.size
+      value: 2
+      objectReference: {fileID: 0}
+    - target: {fileID: 3967374232905845432, guid: a700f3c8cfbf15a4bbf3a5bfc7e6cc70,
+        type: 3}
+      propertyPath: faceMaterials.Array.data[0]
+      value: 
+      objectReference: {fileID: 2100000, guid: de12e07bcfdbeea479dc4dcbba8bec28, type: 2}
+    - target: {fileID: 3967374232905845432, guid: a700f3c8cfbf15a4bbf3a5bfc7e6cc70,
+        type: 3}
+      propertyPath: hairMaterials.Array.data[0]
+      value: 
+      objectReference: {fileID: 2100000, guid: af20b3bc2a0bb3243a10d5488e53fa69, type: 2}
+    - target: {fileID: 3967374232905845432, guid: a700f3c8cfbf15a4bbf3a5bfc7e6cc70,
+        type: 3}
+      propertyPath: hairMaterials.Array.data[1]
+      value: 
+      objectReference: {fileID: 2100000, guid: d282be2e2133aa645b16d700c7bd8e82, type: 2}
     - target: {fileID: 3967374233071548831, guid: a700f3c8cfbf15a4bbf3a5bfc7e6cc70,
         type: 3}
       propertyPath: m_Layer
@@ -6351,7 +6381,7 @@ Transform:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 799929138}
-  m_LocalRotation: {x: 0.41048485, y: -0.23428577, z: 0.109989226, w: 0.8743653}
+  m_LocalRotation: {x: 0.04013933, y: 0.954239, z: -0.14980194, w: 0.25568768}
   m_LocalPosition: {x: 0, y: 3, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0

@@ -7,8 +7,8 @@ namespace Tool
     [ExecuteAlways]
     public class SubmitMaterialData : MonoBehaviour
     {
-        public Material faceMaterial;
-        public Material hairMaterial;
+        public Material[] faceMaterials;
+        public Material[] hairMaterials;
 
         public GameObject headRootBone;
 
@@ -21,17 +21,17 @@ namespace Tool
             {
                 Vector4 frontDir = -(Vector4)headRootBone.transform.forward;
                 Vector4 rightDir = -(Vector4)headRootBone.transform.right;
-                
-                if (faceMaterial != null)
+
+                for (int i = 0; i < faceMaterials.Length; i++)
                 {
-                    faceMaterial.SetVector(FrontDirectionId, frontDir);
-                    faceMaterial.SetVector(RightDirectionId, rightDir);
+                    faceMaterials[i].SetVector(FrontDirectionId, frontDir);
+                    faceMaterials[i].SetVector(RightDirectionId, rightDir);
                 }
 
-                if (hairMaterial != null)
+                for (int i = 0; i < hairMaterials.Length; i++)
                 {
-                    hairMaterial.SetVector(FrontDirectionId, frontDir);
-                    hairMaterial.SetVector(RightDirectionId, rightDir);
+                    hairMaterials[i].SetVector(FrontDirectionId, frontDir);
+                    hairMaterials[i].SetVector(RightDirectionId, rightDir);
                 }
             }
         }

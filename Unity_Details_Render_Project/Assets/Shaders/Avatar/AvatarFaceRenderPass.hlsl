@@ -142,7 +142,7 @@ Surface GetSurface(float4 diffuseMap, float4 normalMap, float4 lightMap, float3 
     half lightFac = dot(lightDirOSXZ, float3(0.0, 0.0, 1.0)) * 0.5 + 0.5;
     half faceShadowFac = SAMPLE_TEXTURE2D(faceLightmap, samplerFaceLightmpa, lightMapUV).r;
 
-    o.diffuseFac = smoothstep(lightFac, lightFac + 0.001, 1.0 - faceShadowFac) *
+    o.diffuseFac = smoothstep(lightFac, lightFac + 0.001, faceShadowFac) *
         GetDepthShadow(o.positionWS, o.normalWS, light.direction, frontWS);
     
     o.FdotV = dot(frontWS, o.viewDirWS);
