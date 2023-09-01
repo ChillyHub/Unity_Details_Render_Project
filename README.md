@@ -114,4 +114,18 @@ https://github.com/ChillyHub/Unity_Details_Render_Project/assets/75598757/b98bab
 
 整个上面一套下来，帧数压力已经比较大了，还需要多方面的优化，包括代码层面到模型层面的优化，还要做些加减法。 另外，随着代码复杂度上升，实例数据处理部分的数据结构设计的缺陷也逐渐暴露，不可预期的bug越来越多的出现，可能需要重新设计一套更完善的结构。
 
+
+
 ![屏幕截图 2023-09-01 202414](./README.assets/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE%202023-09-01%20202414.png)
+
+![屏幕截图 2023-09-01 202142](./README.assets/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE%202023-09-01%20202142.png)
+
+
+
+### 引用
+
+[1] GPU Pro 7: Grass Rendering and Simulation with LOD
+
+[2] GPU Gem 3: [Chapter 16. Vegetation Procedural Animation and Shading in Crysis | NVIDIA Developer](https://developer.nvidia.com/gpugems/gpugems3/part-iii-rendering/chapter-16-vegetation-procedural-animation-and-shading-crysis) 
+
+[3] Jump Flooding Algorithm on Graphics Hardware And Its Applications: [rong-guodong-phd-thesis.pdf (nus.edu.sg)](https://www.comp.nus.edu.sg/~tants/jfa/rong-guodong-phd-thesis.pdf)
