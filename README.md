@@ -5,7 +5,7 @@ A solution for rendering terrain details, such as grass, flowers，use GPU insta
 
 ### 效果
 
-
+https://github.com/ChillyHub/Unity_Details_Render_Project/assets/75598757/37625850-d811-49f5-bef1-0518b40db26a
 
 ![屏幕截图 2023-09-01 194531](./README.assets/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE%202023-09-01%20194531-1693573977933-6.png)
 
@@ -14,6 +14,8 @@ A solution for rendering terrain details, such as grass, flowers，use GPU insta
 ![屏幕截图 2023-09-01 202509](./README.assets/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE%202023-09-01%20202509-1693574036988-9.png)
 
 ![屏幕截图 2023-09-01 202551](./README.assets/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE%202023-09-01%20202551.png)
+
+https://github.com/ChillyHub/Unity_Details_Render_Project/assets/75598757/7485fe92-f335-4c74-9313-603ce4c40e18
 
 
 
@@ -85,6 +87,8 @@ PS: 目前有部分实例闪烁的bug，可能是传入GPU的实例mesh vertex i
 一套交互系统，支持多个交互相机记录物体的 Motion 和 Depth。然后，会使用GPU计算平面2D SDF图。通过交互与被交互物体的 Depth 比较，确定产生交互的范围，再根据这个范围生成sdf图，方便后续根据距离对交互进行更精细的控制（使用 Jump flooding 算法，GPU 算法，复杂度为 O（NlogN），加上多线程，效率不错）。 
 
 然后，可以根据Motion信息，结合固定风场信息和历史帧风场，形成每帧更新的2D混合风场，由此，草会根据交互物体的运动方向摆动，且运动越快，摆动幅度越大。 此外，这套系统还可用于雪地沙地的变化，有了 SDF 图，可以用数学表达式更精细控制变形。风场方面，也可以考虑扩展到3D风场，以实现更多效果。 
+
+https://github.com/ChillyHub/Unity_Details_Render_Project/assets/75598757/b98bab25-8469-4b67-9452-18c47315673e
 
 ![屏幕截图 2023-09-01 202509](./README.assets/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE%202023-09-01%20202509.png)
 
