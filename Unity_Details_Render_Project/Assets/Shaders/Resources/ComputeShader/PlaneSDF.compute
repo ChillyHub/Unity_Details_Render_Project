@@ -1,0 +1,216 @@
+#pragma kernel SDFInitializeCSMain
+#pragma kernel SDFCalculateCSMain
+#pragma kernel SDFMergeCSMain
+
+#pragma multi_compile_local __ _COMPUTE_SHADER_UV_STARTS_AT_TOP
+#pragma multi_compile_local __ _COMPUTE_SHADER_REVERSED_Z
+
+#define GROUP_SIZE_X 8
+#define GROUP_SIZE_Y 8
+#define GROUP_SIZE_Z 1
+
+#define FLT_MAX  3.402823466e+38
+
+RWTexture2D<float4> _SDFTexture;
+RWTexture2D<int4> _DestTexture;
+Texture2D<int4> _SrcTexture;
+Texture2D<float4> _DepthMotionTexture;
+Texture2D<float4> _GroundDepthTexture;
+
+// x: near  y: far  z: reverse  w: no use
+float4 _OrthoProjectionParams;
+float _RelativeHeight;
+
+int _TextureSize;
+int _EnableOutside;
+int _EnableInside;
+int _StepLen;
+
+static int2 offsets[8] = {
+    int2(-1, -1),
+    int2(-1,  0),
+    int2(-1,  1),
+    int2( 0, -1),
+    int2( 0,  1),
+    int2( 1, -1),
+    int2( 1,  0),
+    int2( 1,  1)
+};
+
+float GetInvOrthoEyeDepth(float depth, float4 orthoProjectionParams)
+{
+    // depth = lerp(depth, 1.0 - depth, orthoProjectionParams.z);
+    return orthoProjectionParams.x + (orthoProjectionParams.y - orthoProjectionParams.x) * depth;
+}
+
+bool IsOutside(uint3 id)
+{
+    float objectDepth = _DepthMotionTexture.Load(id).z;
+    float groundDepth = _GroundDepthTexture.Load(id).z;
+    float objectDepthEye = GetInvOrthoEyeDepth(objectDepth, _OrthoProjectionParams);
+    float groundDepthEye = GetInvOrthoEyeDepth(groundDepth, _OrthoProjectionParams);
+
+    // TODO: Finish depth check
+    if (objectDepthEye > groundDepthEye - _RelativeHeight)
+    {
+        return false;
+    }
+    
+    return true;
+}
+
+[numthreads(GROUP_SIZE_X, GROUP_SIZE_Y, GROUP_SIZE_Z)]
+void SDFInitializeCSMain(uint3 id : SV_DispatchThreadID)
+{
+    if (IsOutside(id))
+    {
+        _DestTexture[id.xy] = int4(id.xy, -1, -1);
+    }
+    else
+    {
+        _DestTexture[id.xy] = int4(-1, -1, id.xy);
+    }
+}
+
+void SDFOutside(out int4 output, int4 input, int2 id)
+{
+    output = input;
+
+    if (input.x == -1)
+    {
+        return;
+    }
+
+    int2 nearestId = input.zw;
+    float minDist = FLT_MAX;
+
+    if (input.z != -1)
+    {
+        minDist = length(float2(id - nearestId));
+    }
+
+    bool minChange = false;
+    for (uint i = 0; i < 8; i++)
+    {
+        int2 sampleId = id + offsets[i] * _StepLen;
+        sampleId = clamp(sampleId, 0, _TextureSize - 1);
+
+        int4 sampleInput = _SrcTexture.Load(uint3(sampleId, 0));
+        if (sampleInput.z != -1)
+        {
+            int2 tempId = sampleInput.zw;
+            float tempDist = length(float2(id - tempId));
+            if (tempDist < minDist)
+            {
+                minDist = tempDist;
+                nearestId = tempId;
+                minChange = true;
+            }
+        }
+    }
+
+    if (minChange)
+    {
+        output = int4(input.xy, nearestId);
+    }
+}
+
+void SDFInside(out int4 output, int4 input, int2 id)
+{
+    output = input;
+
+    if (input.z == -1)
+    {
+        return;
+    }
+
+    int2 nearestId = input.xy;
+    float minDist = FLT_MAX;
+
+    if (input.x != -1)
+    {
+        minDist = length(float2(id - nearestId));
+    }
+
+    bool minChange = false;
+    for (uint i = 0; i < 8; i++)
+    {
+        int2 sampleId = id + offsets[i] * _StepLen;
+        sampleId = clamp(sampleId, 0, _TextureSize - 1);
+
+        int4 sampleInput = _SrcTexture.Load(uint3(sampleId, 0));
+        if (sampleInput.x != -1)
+        {
+            int2 tempId = sampleInput.xy;
+            float tempDist = length(float2(id - tempId));
+            if (tempDist < minDist)
+            {
+                minDist = tempDist;
+                nearestId = tempId;
+                minChange = true;
+            }
+        }
+    }
+
+    if (minChange)
+    {
+        output = int4(nearestId, input.zw);
+    }
+}
+
+[numthreads(GROUP_SIZE_X, GROUP_SIZE_Y, GROUP_SIZE_Z)]
+void SDFCalculateCSMain(uint3 id : SV_DispatchThreadID)
+{
+    if ((int)id.x >= _TextureSize || (int)id.y >= _TextureSize)
+    {
+        return;
+    }
+
+    int4 output = int4(0, 0, 0, 0);
+    int4 input = _SrcTexture.Load(id);
+    if (_EnableOutside)
+    {
+        SDFOutside(output, input, id.xy);
+        input = output;
+    }
+
+    if (_EnableInside)
+    {
+        SDFInside(output, input, id.xy);
+    }
+    
+    _DestTexture[id.xy] = output;
+}
+
+[numthreads(GROUP_SIZE_X, GROUP_SIZE_Y, GROUP_SIZE_Z)]
+void SDFMergeCSMain(uint3 id : SV_DispatchThreadID)
+{
+    int4 input = _SrcTexture.Load(id);
+    int2 currId = id.xy;
+
+    float dist = 0.0;
+    if (IsOutside(id))
+    {
+        if (input.z == -1)
+        {
+            dist = FLT_MAX;
+        }
+        else
+        {
+            dist = length(float2(currId - input.zw));
+        }
+        _SDFTexture[id.xy] = float4(dist, 0.0, 0.0, 0.0);
+    }
+    else
+    {
+        if (input.x == -1)
+        {
+            dist = FLT_MAX;
+        }
+        else
+        {
+            dist = -length(float2(currId - input.xy));
+        }
+        _SDFTexture[id.xy] = float4(dist, 0.0, 0.0, 0.0);
+    }
+}

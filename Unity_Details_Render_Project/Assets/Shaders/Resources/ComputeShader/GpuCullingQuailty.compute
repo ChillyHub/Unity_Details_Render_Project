@@ -1,0 +1,421 @@
+#pragma kernel FrustumAndHiZCullingCSMain
+#pragma kernel FillHistogramTableCSMain
+#pragma kernel ColumnScanHistogramTableCSMain
+#pragma kernel PrefixScanCSMain
+#pragma kernel PrefixScanTableCSMain
+#pragma kernel DistRearrangeCSMain
+#pragma kernel FillIndirectArgsCSMain
+#pragma kernel TypeRearrangeCSMain
+
+#pragma multi_compile_local __ _COMPUTE_SHADER_UV_STARTS_AT_TOP
+#pragma multi_compile_local __ _COMPUTE_SHADER_REVERSED_Z
+
+// Read Write Buffer
+StructuredBuffer<float3> _AllInstancePositions;
+StructuredBuffer<float4> _AllInstanceTransforms;
+StructuredBuffer<uint> _AllInstanceInfos;
+StructuredBuffer<uint2> _AllTypesInfos;
+StructuredBuffer<float> _TypeLodThresholds;
+RWStructuredBuffer<uint> _DrawIndirectArgs;
+
+AppendStructuredBuffer<uint4> _IndicesDistancesTypesLods;
+
+Texture2D _DepthMipmapTexture;
+float4 _DepthTextureSize;
+
+float4x4 _MatrixVP;
+float3 _CameraPos;
+float3 _CameraDir;
+
+float _BoundingBoxRadius;
+float _MaxCullingDistance;
+
+uint _VertexCounts;
+uint _ResultCounts;
+uint _EnableCulling;
+
+uint _TypeCount;
+uint _TotalLodCounts;
+
+#define GROUP_SIZE 64
+
+#define DIST_BIT 8
+#define DIST_SIZE (1 << DIST_BIT) // 256
+#define DIST_MASK (DIST_SIZE - 1) // 255
+
+#define MAX_LOD_COUNT 4
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void FrustumAndHiZCullingCSMain(uint groupIndex : SV_GroupIndex, uint3 groupId : SV_GroupID,
+    uint3 id : SV_DispatchThreadID)
+{
+    uint vertexIndex = groupId.x * GROUP_SIZE + groupIndex;
+
+    if (vertexIndex >= _VertexCounts)
+    {
+        return;
+    }
+
+    uint type = _AllInstanceInfos[vertexIndex];
+    float boundingBoxWidth = _AllInstanceTransforms[vertexIndex].x;
+    float boundingBoxHeight = _AllInstanceTransforms[vertexIndex].y;
+    
+    // Frustum culling
+    float3 positionWS = _AllInstancePositions[vertexIndex];
+    float4 positionCS = mul(_MatrixVP, float4(positionWS, 1.0));
+    float4 positionNearCS = mul(_MatrixVP, float4(positionWS - normalize(_CameraDir) * boundingBoxWidth, 1.0));
+    
+    float distance = positionCS.w; // dot((positionWS - _CameraPos), normalize(_CameraDir));
+    float radiusSS = boundingBoxWidth / max(distance, 1.0) * _DepthTextureSize.y;
+
+    float culling = 0.0;
+    culling += step(distance + radiusSS, 0.0);                                               // Cull back
+    culling += step(_MaxCullingDistance, distance - radiusSS);                               // Cull front
+    culling += max(abs(positionCS.x) - boundingBoxWidth * _DepthTextureSize.z,
+        abs(positionCS.y) - boundingBoxHeight) > positionCS.w;                   // Cull up,down,left,right
+    
+    culling = saturate(culling);
+    if (culling > 0.5)
+    {
+        return;
+    }
+
+    // HiZ culling
+    float2 positionNDC = (positionCS.xy / positionCS.w) * 0.5 + 0.5;
+
+    #if _COMPUTE_SHADER_UV_STARTS_AT_TOP
+        positionNDC.y = 1.0 - positionNDC.y;
+    #endif
+    
+    uint mipLevel = clamp((uint)log2(radiusSS), 0, 8);
+    uint2 texSize = (uint2)_DepthTextureSize.xy / (1 << mipLevel);
+    uint2 indexLB = clamp(uint2(positionNDC * texSize - 0.5), 0, texSize - 1);
+    float depth = positionNearCS.z / positionNearCS.w;
+    float depthLB = _DepthMipmapTexture.mips[mipLevel][indexLB + uint2(0, 0)].r;
+    float depthRB = _DepthMipmapTexture.mips[mipLevel][indexLB + uint2(1, 0)].r;
+    float depthLU = _DepthMipmapTexture.mips[mipLevel][indexLB + uint2(0, 1)].r;
+    float depthRU = _DepthMipmapTexture.mips[mipLevel][indexLB + uint2(1, 1)].r;
+    float depthTest = _DepthMipmapTexture.mips[mipLevel][indexLB].r;
+    
+    #if _COMPUTE_SHADER_REVERSED_Z
+        float mapDepth = min(min(depthLB, depthRB), min(depthLU, depthRU));
+        culling += step(depth, mapDepth);
+    #else
+        float mapDepth = max(max(depthLB, depthRB), max(depthLU, depthRU));
+        culling += step(mapDepth, depth);
+    #endif
+
+    culling = saturate(culling);
+    if (culling > 0.5)
+    {
+        return;
+    }
+
+    // Calculate LOD
+    uint2 lodInfo = _AllTypesInfos[type];
+    uint lodThresholdIndex = lodInfo.x;
+    uint lodCount = lodInfo.y;
+    uint lod = 0;
+    for (uint i = 0; i < lodCount; ++i)
+    {
+        float prevLodThreshold = 0.0;
+        float currLodThreshold = _TypeLodThresholds[lodThresholdIndex + i];
+        if (i > 0)
+        {
+            prevLodThreshold = _TypeLodThresholds[lodThresholdIndex + i - 1];
+        }
+
+        if (prevLodThreshold <= distance && currLodThreshold > distance)
+        {
+            lod = i;
+        }
+        else
+        {
+            lod = MAX_LOD_COUNT;
+        }
+    }
+    culling = step((float)MAX_LOD_COUNT - 0.5, (float)lod);
+    if (culling > 0.5)
+    {
+        return;
+    }
+
+    // Append
+    distance = lerp(distance, _MaxCullingDistance, culling);
+    uint quantizedDistance = (uint)((distance / _MaxCullingDistance) * (float)DIST_MASK) & DIST_MASK;
+
+    _IndicesDistancesTypesLods.Append(uint4(vertexIndex, quantizedDistance, type, lod));
+}
+
+#undef GROUP_SIZE
+
+#define GROUP_SIZE DIST_SIZE
+
+RWStructuredBuffer<uint4> _RWIndicesDistancesTypesLods;
+RWStructuredBuffer<uint4> _TempIndicesDistancesTypesLods;
+RWStructuredBuffer<uint> _DistHistogramTable;
+RWStructuredBuffer<uint> _TypeHistogramTable;
+RWStructuredBuffer<uint> _LodHistogramTable;
+RWStructuredBuffer<uint> _DistPrefixScan;
+RWStructuredBuffer<uint> _TypePrefixScan;
+RWStructuredBuffer<uint> _LodPrefixScan;
+
+groupshared uint distSharedMemory[DIST_SIZE];
+groupshared uint distSharedMemoryPrefixScan[DIST_SIZE];
+groupshared uint typeSharedMemory[DIST_SIZE];
+groupshared uint typeSharedMemoryPrefixScan[DIST_SIZE];
+groupshared uint lodSharedMemory[DIST_SIZE * MAX_LOD_COUNT];
+groupshared uint lodSharedMemoryPrefixScan[DIST_SIZE * MAX_LOD_COUNT];
+
+uint pow2(uint v)
+{
+    return ((uint)1 << v);
+}
+
+// Per vertex have a thread
+[numthreads(GROUP_SIZE, 1, 1)]
+void FillHistogramTableCSMain(uint groupIndex : SV_GroupIndex, uint3 groupId : SV_GroupID,
+    uint3 id : SV_DispatchThreadID)
+{
+    uint threadIndex = groupId.x * GROUP_SIZE + groupIndex;
+
+    // Initialize shared memory
+    distSharedMemory[groupIndex] = 0;
+    typeSharedMemory[groupIndex] = 0;
+    for (uint i = 0; i < MAX_LOD_COUNT; ++i)
+    {
+        lodSharedMemory[groupIndex * MAX_LOD_COUNT + i] = 0;
+    }
+
+    GroupMemoryBarrierWithGroupSync();
+
+    uint4 indDistTypeLod = _RWIndicesDistancesTypesLods[threadIndex];
+    _TempIndicesDistancesTypesLods[threadIndex] = indDistTypeLod;
+
+    uint lodIndex = _AllTypesInfos[indDistTypeLod.z].x + indDistTypeLod.w;
+
+    if (threadIndex < _ResultCounts)
+    {
+        InterlockedAdd(distSharedMemory[indDistTypeLod.y], 1);
+        InterlockedAdd(typeSharedMemory[indDistTypeLod.z], 1);
+        InterlockedAdd(lodSharedMemory[lodIndex], 1);
+    }
+
+    GroupMemoryBarrierWithGroupSync();
+
+    _DistHistogramTable[threadIndex] = distSharedMemory[groupIndex];
+    _TypeHistogramTable[threadIndex] = typeSharedMemory[groupIndex];
+    for (uint j = 0; j < MAX_LOD_COUNT; ++j)
+    {
+        _LodHistogramTable[threadIndex * MAX_LOD_COUNT + j] = lodSharedMemory[groupIndex * MAX_LOD_COUNT + j];
+    }
+}
+
+// Per quantized distance have a thread, only one group
+[numthreads(GROUP_SIZE, 1, 1)]
+void ColumnScanHistogramTableCSMain(uint groupIndex : SV_GroupIndex, uint3 groupId : SV_GroupID,
+    uint3 id : SV_DispatchThreadID)
+{
+    uint histogramCount = (uint)ceil((float)_ResultCounts / GROUP_SIZE);
+    uint sumDist = 0;
+    uint sumType = 0;
+    uint sumLods[MAX_LOD_COUNT];
+    for (uint i = 0; i < MAX_LOD_COUNT; ++i)
+    {
+        sumLods[i] = 0;
+    }
+
+    for (uint j = 0; j < histogramCount; ++j)
+    {
+        uint index = DIST_SIZE * j + groupIndex;
+        sumDist += _DistHistogramTable[index];
+        sumType += _TypeHistogramTable[index];
+        _DistHistogramTable[index] = sumDist;
+        _TypeHistogramTable[index] = sumType;
+        for (uint k = 0; k < MAX_LOD_COUNT; ++k)
+        {
+            sumLods[k] += _LodHistogramTable[index * MAX_LOD_COUNT + k];
+            _LodHistogramTable[index * MAX_LOD_COUNT + k] = sumLods[k];
+        }
+    }
+}
+
+// Per quantized distance have a thread, only one group
+[numthreads(GROUP_SIZE, 1, 1)]
+void PrefixScanCSMain(uint groupIndex : SV_GroupIndex, uint3 groupId : SV_GroupID, uint3 id : SV_DispatchThreadID)
+{
+    uint histogramCount = (uint)ceil((float)_ResultCounts / GROUP_SIZE);
+
+    distSharedMemoryPrefixScan[groupIndex] = _DistHistogramTable[DIST_SIZE * (histogramCount - 1) + groupIndex];
+    distSharedMemory[groupIndex] = distSharedMemoryPrefixScan[groupIndex];
+
+    typeSharedMemoryPrefixScan[groupIndex] = _TypeHistogramTable[DIST_SIZE * (histogramCount - 1) + groupIndex];
+    typeSharedMemory[groupIndex] = typeSharedMemoryPrefixScan[groupIndex];
+
+    for (uint i = 0; i < MAX_LOD_COUNT; ++i)
+    {
+        uint lIndex = groupIndex * MAX_LOD_COUNT + i;
+        lodSharedMemoryPrefixScan[lIndex] = _LodHistogramTable[DIST_SIZE * MAX_LOD_COUNT * (histogramCount - 1) + lIndex];
+        lodSharedMemory[lIndex] = lodSharedMemoryPrefixScan[lIndex];
+    }
+
+    GroupMemoryBarrierWithGroupSync();
+
+    uint range = (uint)(log2(DIST_SIZE));
+    for (uint j = 0; j < range; ++j)
+    {
+        if (groupIndex >= pow2(j))
+        {
+            distSharedMemory[groupIndex] = distSharedMemoryPrefixScan[groupIndex] + distSharedMemoryPrefixScan[groupIndex - pow2(j)];
+            typeSharedMemory[groupIndex] = typeSharedMemoryPrefixScan[groupIndex] + typeSharedMemoryPrefixScan[groupIndex - pow2(j)];
+        }
+
+        GroupMemoryBarrierWithGroupSync();
+
+        distSharedMemoryPrefixScan[groupIndex] = distSharedMemory[groupIndex];
+        typeSharedMemoryPrefixScan[groupIndex] = typeSharedMemory[groupIndex];
+
+        GroupMemoryBarrierWithGroupSync();
+    }
+
+    range = (uint)(log2(DIST_SIZE * MAX_LOD_COUNT));
+    for (uint k = 0; k < range; ++k)
+    {
+        for (uint l = 0; l < MAX_LOD_COUNT; ++l)
+        {
+            uint lIndex = groupIndex * MAX_LOD_COUNT + l;
+            if (lIndex >= pow2(k))
+            {
+                lodSharedMemory[lIndex] = lodSharedMemoryPrefixScan[lIndex] + lodSharedMemoryPrefixScan[lIndex - pow2(k)];
+            }
+        }
+
+        GroupMemoryBarrierWithGroupSync();
+
+        for (uint m = 0; m < MAX_LOD_COUNT; ++m)
+        {
+            uint lIndex = groupIndex * MAX_LOD_COUNT + m;
+            lodSharedMemoryPrefixScan[lIndex] = lodSharedMemory[lIndex];
+        }
+
+        GroupMemoryBarrierWithGroupSync();
+    }
+    
+    _DistPrefixScan[groupIndex + 1] = distSharedMemoryPrefixScan[groupIndex];
+    _TypePrefixScan[groupIndex + 1] = typeSharedMemoryPrefixScan[groupIndex];
+    for (uint l = 0; l < MAX_LOD_COUNT; ++l)
+    {
+        _LodPrefixScan[groupIndex * MAX_LOD_COUNT + l + 1] = lodSharedMemoryPrefixScan[groupIndex * MAX_LOD_COUNT + l];
+    }
+
+    if (groupIndex == 0)
+    {
+        _DistPrefixScan[0] = 0;
+        _TypePrefixScan[0] = 0;
+        // _TypePrefixScan[1] = 0;
+        // _TypePrefixScan[2] = 0;
+        // _TypePrefixScan[3] = 0;
+        _LodPrefixScan[0] = 0;
+    }
+}
+
+// Per vertex have a thread
+[numthreads(GROUP_SIZE, 1, 1)]
+void PrefixScanTableCSMain(uint groupIndex : SV_GroupIndex, uint3 groupId : SV_GroupID, uint3 id : SV_DispatchThreadID)
+{
+    uint index = groupId.x * GROUP_SIZE + groupIndex;
+    distSharedMemory[groupIndex] = _DistHistogramTable[index];
+    typeSharedMemory[groupIndex] = _TypeHistogramTable[index];
+
+    GroupMemoryBarrierWithGroupSync();
+
+    distSharedMemory[groupIndex] += _DistPrefixScan[groupIndex];
+    _DistHistogramTable[index] = distSharedMemory[groupIndex];
+
+    typeSharedMemory[groupIndex] += _TypePrefixScan[groupIndex];
+    _TypeHistogramTable[index] = typeSharedMemory[groupIndex];
+}
+
+// Per group only execute one thread
+[numthreads(GROUP_SIZE, 1, 1)]
+void DistRearrangeCSMain(uint groupIndex : SV_GroupIndex, uint3 groupId : SV_GroupID, uint3 id : SV_DispatchThreadID)
+{
+    // _RWIndicesDistancesTypesLods[id.x] = _TempIndicesDistancesTypesLods[id.x];
+    // return;
+    
+    if (groupIndex > 0)
+    {
+        return;
+    }
+
+    for (uint i = 0; i < DIST_SIZE; ++i)
+    {
+        uint4 indDistTypeLod = _TempIndicesDistancesTypesLods[groupId.x * DIST_SIZE + i];
+        uint dist = indDistTypeLod.y;
+        uint index = 0;
+
+        if (groupId.x == 0)
+        {
+            index = _DistPrefixScan[dist];
+            _DistPrefixScan[dist]++;
+        }
+        else
+        {
+            uint ind = DIST_SIZE * (groupId.x - 1) + dist;
+            index = _DistHistogramTable[ind];
+            _DistHistogramTable[ind]++;
+        }
+
+        _RWIndicesDistancesTypesLods[index] = indDistTypeLod;
+    }
+}
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void FillIndirectArgsCSMain(uint groupIndex : SV_GroupIndex, uint3 groupId : SV_GroupID, uint3 id : SV_DispatchThreadID)
+{
+    uint threadIndex = groupId.x * GROUP_SIZE + groupIndex;
+    
+    _TempIndicesDistancesTypesLods[threadIndex] = _RWIndicesDistancesTypesLods[threadIndex];
+
+    // Fill indirect args
+    if (threadIndex < _TotalLodCounts)
+    {
+        _DrawIndirectArgs[threadIndex * 5 + 4] = _LodPrefixScan[threadIndex];
+        _DrawIndirectArgs[threadIndex * 5 + 1] = _LodPrefixScan[threadIndex + 1] - _LodPrefixScan[threadIndex];
+    }
+}
+
+// Per group only execute one thread
+[numthreads(GROUP_SIZE, 1, 1)]
+void TypeRearrangeCSMain(uint groupIndex : SV_GroupIndex, uint3 groupId : SV_GroupID, uint3 id : SV_DispatchThreadID)
+{
+    // _RWIndicesDistancesTypesLods[id.x] = _TempIndicesDistancesTypesLods[id.x];
+    // return;
+    
+    if (groupIndex > 0)
+    {
+        return;
+    }
+
+    uint start = 0;
+    for (uint i = 0; i < DIST_SIZE; ++i)
+    {
+        uint4 indDistTypeLod = _TempIndicesDistancesTypesLods[groupId.x * DIST_SIZE + i];
+        uint type = indDistTypeLod.z;
+        uint index = 0;
+
+        if (groupId.x == 0)
+        {
+            index = _TypePrefixScan[type];
+            _TypePrefixScan[type]++;
+        }
+        else
+        {
+            uint ind = DIST_SIZE * (groupId.x - 1) + type;
+            index = _TypeHistogramTable[ind];
+            _TypeHistogramTable[ind]++;
+        }
+
+        _RWIndicesDistancesTypesLods[index] = indDistTypeLod;
+    }
+}
